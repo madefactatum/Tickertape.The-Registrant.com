@@ -117,8 +117,7 @@ const MERGER_KEYWORDS = [
 ];
 
 function buildUrl(formType, keyword) {
-  // Correct EFTS endpoint with sort by file_date descending
-  let url = `https://efts.sec.gov/EFTS/solr/search/efts?forms=${encodeURIComponent(formType)}&dateRange=custom&startdt=2026-01-01&sort=file_date+desc`;
+  let url = `https://efts.sec.gov/EFTS/solr/search/efts?forms=${encodeURIComponent(formType)}&dateRange=custom&startdt=2026-01-01`;
   if (keyword) url += `&q=${encodeURIComponent('"' + keyword + '"')}`;
   return url;
 }
