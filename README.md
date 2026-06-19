@@ -1,0 +1,1 @@
+# Tickertape.The-Registrant.com
