@@ -6,20 +6,17 @@
 <title>Deals</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-
   :root {
     --ticker-bg: #0f0f0f;
     --ticker-text: #c8c0b0;
     --ticker-accent: #a89070;
   }
-
   html, body {
     background: var(--ticker-bg);
     overflow: hidden;
     height: 37px;
     width: 100%;
   }
-
   .ticker-wrap {
     background: var(--ticker-bg);
     color: var(--ticker-text);
@@ -28,11 +25,10 @@
     display: flex;
     align-items: center;
     width: 100%;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif;
     font-weight: 300;
     position: relative;
   }
-
   .ticker-label {
     flex-shrink: 0;
     padding: 0 19px;
@@ -47,7 +43,6 @@
     background: var(--ticker-bg);
     z-index: 2;
   }
-
   .ticker-track {
     display: flex;
     white-space: nowrap;
@@ -56,28 +51,16 @@
     letter-spacing: 0.03em;
     will-change: transform;
   }
-
-  .ticker-track span.block {
-    padding: 0 8px;
-  }
-
-  .sep {
-    color: var(--ticker-accent);
-    padding: 0 12px;
-  }
-
+  .sep { color: var(--ticker-accent); padding: 0 12px; }
   @keyframes ticker {
     0%   { transform: translateX(0); }
     100% { transform: translateX(-50%); }
   }
-
   .ticker-wrap::after {
     content: '';
     position: absolute;
-    right: 0;
-    top: 0;
-    width: 60px;
-    height: 100%;
+    right: 0; top: 0;
+    width: 60px; height: 100%;
     background: linear-gradient(to right, transparent, var(--ticker-bg));
     pointer-events: none;
     z-index: 3;
@@ -85,98 +68,70 @@
 </style>
 </head>
 <body>
-
 <div class="ticker-wrap">
   <div class="ticker-label">Deals</div>
   <div class="ticker-track" id="ticker-track">
-    <span class="block" style="color:var(--ticker-text);font-size:12px;">Loading filings&hellip;</span>
+    <span style="padding:0 16px;color:var(--ticker-text);font-size:12px;">Loading&hellip;</span>
   </div>
 </div>
 
 <script>
-// ── EDGAR DEAL TICKER ──────────────────────────────────────────────
-// SEC EDGAR full-text search (efts.sec.gov) — CORS open, no proxy needed.
-// Form types: S-4, F-4, DEFM14A, PREM14A, SC TO-T, SC TO-I, SC 13D, 15-12G
-// Plus 8-K filtered by merger keywords.
-// Polls once per hour.
+// Single EDGAR full-text search query combining all merger form types
+// Uses the EDGAR EFTS search UI endpoint which is publicly accessible
+const FORMS = 'S-4,F-4,DEFM14A,PREM14A,SC%20TO-T,SC%20TO-I,SC%2013D,15-12G';
+const URL = `https://efts.sec.gov/EFTS/solr/search/efts?forms=${FORMS}&dateRange=custom&startdt=2026-01-01`;
 
-const FORM_TYPES = [
-  { type: 'S-4',     label: 'S-4' },
-  { type: 'F-4',     label: 'F-4' },
-  { type: 'DEFM14A', label: 'Proxy' },
-  { type: 'PREM14A', label: 'Pre-Proxy' },
-  { type: 'SC TO-T', label: 'TO-T' },
-  { type: 'SC TO-I', label: 'TO-I' },
-  { type: 'SC 13D',  label: '13D' },
-  { type: '15-12G',  label: '15-12G' }
-];
+// Separate single 8-K query with merger keyword
+const URL_8K = `https://efts.sec.gov/EFTS/solr/search/efts?forms=8-K&q=%22merger%22&dateRange=custom&startdt=2026-01-01`;
 
-const MERGER_KEYWORDS = [
-  'merger', 'acquisition', 'tender offer', 'definitive agreement',
-  'going private', 'take-private', 'business combination', 'amalgamation'
-];
-
-function buildUrl(formType, keyword) {
-  let url = `https://efts.sec.gov/EFTS/solr/search/efts?forms=${encodeURIComponent(formType)}&dateRange=custom&startdt=2026-01-01`;
-  if (keyword) url += `&q=${encodeURIComponent('"' + keyword + '"')}`;
-  return url;
+async function safeFetch(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+  return res.json();
 }
 
-async function fetchFormType(formType, label, keyword) {
-  try {
-    const url = buildUrl(formType, keyword);
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const json = await res.json();
-
-    // Debug: log raw response for first form type only
-    if (formType === 'S-4') {
-      console.log('EDGAR S-4 raw response:', JSON.stringify(json).slice(0, 500));
-    }
-
-    const hits = json.hits?.hits || [];
-    console.log(`${label}: ${hits.length} hits`);
-
-    return hits.map(h => {
-      const src = h._source || {};
-      const id = h._id || '';
-      const accession = id.split(':')[0];
-      const cikRaw = accession.split('-')[0];
-      const cikInt = parseInt(cikRaw, 10);
-      const accClean = accession.replace(/-/g, '');
-      const link = (cikInt && accClean)
-        ? `https://www.sec.gov/Archives/edgar/data/${cikInt}/${accClean}/`
-        : `https://efts.sec.gov/EFTS/solr/search/efts?forms=${encodeURIComponent(formType)}&dateRange=custom&startdt=2026-01-01`;
-
-      return {
-        type: label,
-        company: src.entity_name || 'Unknown',
-        date: (src.file_date || '').slice(0, 10),
-        link
-      };
-    });
-  } catch (err) {
-    console.warn(`EDGAR feed error (${label}):`, err);
-    return [];
-  }
+function parseHits(json, label) {
+  const hits = json?.hits?.hits || [];
+  return hits.map(h => {
+    const src = h._source || {};
+    const id = h._id || '';
+    const accession = id.split(':')[0];
+    const cik = parseInt(accession.split('-')[0], 10);
+    const acc = accession.replace(/-/g, '');
+    const link = (cik && acc)
+      ? `https://www.sec.gov/Archives/edgar/data/${cik}/${acc}/`
+      : 'https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=S-4';
+    return {
+      type: src.form_type || label,
+      company: src.entity_name || 'Unknown',
+      date: (src.file_date || '').slice(0, 10),
+      link
+    };
+  });
 }
 
 async function buildTicker() {
   const track = document.getElementById('ticker-track');
+  let filings = [];
 
-  const formPromises  = FORM_TYPES.map(f => fetchFormType(f.type, f.label, null));
-  const keywordPromises = MERGER_KEYWORDS.map(kw => fetchFormType('8-K', '8-K', kw));
-
-  const results = await Promise.all([...formPromises, ...keywordPromises]);
-  const filings = results.flat();
+  try {
+    const [json1, json2] = await Promise.all([safeFetch(URL), safeFetch(URL_8K)]);
+    console.log('Main response:', JSON.stringify(json1).slice(0, 300));
+    filings = [...parseHits(json1, 'Filing'), ...parseHits(json2, '8-K')];
+  } catch(err) {
+    console.error('Fetch error:', err);
+    track.innerHTML = `<span style="padding:0 16px;color:#666;font-size:11px;">Feed unavailable — ${err.message}</span>`;
+    return;
+  }
 
   if (filings.length === 0) {
-    track.innerHTML = '<span class="block" style="color:var(--ticker-text);padding:0 16px;">No recent filings found.</span>';
+    track.innerHTML = '<span style="padding:0 16px;color:#666;font-size:11px;">No recent filings found.</span>';
     return;
   }
 
   filings.sort((a, b) => b.date.localeCompare(a.date));
 
+  // Deduplicate
   const seen = new Set();
   const unique = filings.filter(f => {
     const key = `${f.type}|${f.company}|${f.date}`;
@@ -185,23 +140,17 @@ async function buildTicker() {
     return true;
   });
 
-  const items = unique.map(f =>
-    `<span class="block">` +
+  const html = unique.map(f =>
+    `<span style="padding:0 8px;">` +
     `<a href="${f.link}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">` +
     `<span style="color:var(--ticker-accent);font-size:10px;letter-spacing:0.14em;margin-right:5px;">${f.type}</span>` +
     `${f.company}` +
     `<span style="color:#444;font-size:10px;margin-left:8px;">${f.date}</span>` +
-    `</a>` +
-    `</span><span class="sep">&#9670;</span>`
-  );
+    `</a></span><span class="sep">&#9670;</span>`
+  ).join('');
 
-  const tickerHTML = items.join('');
-  track.innerHTML =
-    `<span style="display:flex;align-items:center;">${tickerHTML}</span>` +
-    `<span style="display:flex;align-items:center;">${tickerHTML}</span>`;
-
-  const duration = Math.max(60, unique.length * 5);
-  track.style.animationDuration = `${duration}s`;
+  track.innerHTML = `<span style="display:flex;align-items:center;">${html}</span>`.repeat(2);
+  track.style.animationDuration = `${Math.max(60, unique.length * 5)}s`;
 }
 
 buildTicker();
