@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deals</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --ticker-bg: #0f0f0f;
+    --ticker-text: #c8c0b0;
+    --ticker-accent: #a89070;
+  }
+
+  html, body {
+    background: var(--ticker-bg);
+    overflow: hidden;
+    height: 37px;
+    width: 100%;
+  }
+
+  .ticker-wrap {
+    background: var(--ticker-bg);
+    color: var(--ticker-text);
+    height: 37px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    width: 100%;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-weight: 300;
+    position: relative;
+  }
+
+  .ticker-label {
+    flex-shrink: 0;
+    padding: 0 19px;
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ticker-accent);
+    border-right: 1px solid #333;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    background: var(--ticker-bg);
+    z-index: 2;
+  }
+
+  .ticker-track {
+    display: flex;
+    white-space: nowrap;
+    animation: ticker 60s linear infinite;
+    font-size: 14px;
+    letter-spacing: 0.03em;
+    will-change: transform;
+  }
+
+  .ticker-track span.block {
+    padding: 0 8px;
+  }
+
+  .sep {
+    color: var(--ticker-accent);
+    padding: 0 12px;
+  }
+
+  @keyframes ticker {
+    0%   { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+  }
+
+  .ticker-wrap::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    top: 0;
+    width: 60px;
+    height: 100%;
+    background: linear-gradient(to right, transparent, var(--ticker-bg));
+    pointer-events: none;
+    z-index: 3;
+  }
+</style>
+</head>
+<body>
+
+<div class="ticker-wrap">
+  <div class="ticker-label">Deals</div>
+  <div class="ticker-track" id="ticker-track">
+    <span class="block" style="color:var(--ticker-text);font-size:12px;">Loading filings&hellip;</span>
+  </div>
+</div>
+
+<script>
+// ── EDGAR DEAL TICKER ──────────────────────────────────────────────
+// SEC EDGAR full-text search (efts.sec.gov) — CORS open, no proxy needed.
+// Form types: S-4, F-4, DEFM14A, PREM14A, SC TO-T, SC TO-I, SC 13D, 15-12G
+// Plus 8-K filtered by merger keywords.
+// Polls once per hour.
+
+const FORM_TYPES = [
+  { type: 'S-4',     label: 'S-4' },
+  { type: 'F-4',     label: 'F-4' },
+  { type: 'DEFM14A', label: 'Proxy' },
+  { type: 'PREM14A', label: 'Pre-Proxy' },
+  { type: 'SC TO-T', label: 'TO-T' },
+  { type: 'SC TO-I', label: 'TO-I' },
+  { type: 'SC 13D',  label: '13D' },
+  { type: '15-12G',  label: '15-12G' }
+];
+
+const MERGER_KEYWORDS = [
+  'merger', 'acquisition', 'tender offer', 'definitive agreement',
+  'going private', 'take-private', 'business combination', 'amalgamation'
+];
+
+function buildUrl(formType, keyword) {
+  // Correct EFTS endpoint with sort by file_date descending
+  let url = `https://efts.sec.gov/EFTS/solr/search/efts?forms=${encodeURIComponent(formType)}&dateRange=custom&startdt=2026-01-01&sort=file_date+desc`;
+  if (keyword) url += `&q=${encodeURIComponent('"' + keyword + '"')}`;
+  return url;
+}
+
+async function fetchFormType(formType, label, keyword) {
+  try {
+    const url = buildUrl(formType, keyword);
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    const hits = json.hits?.hits || [];
+
+    return hits.map(h => {
+      const src = h._source || {};
+      // Build direct EDGAR filing link from accession number
+      const id = h._id || '';
+      const accession = id.split(':')[0]; // e.g. "0001234567-26-001234"
+      const cikRaw = accession.split('-')[0];
+      const cikInt = parseInt(cikRaw, 10);
+      const accClean = accession.replace(/-/g, '');
+      const link = (cikInt && accClean)
+        ? `https://www.sec.gov/Archives/edgar/data/${cikInt}/${accClean}/`
+        : `https://efts.sec.gov/EFTS/solr/search/efts?forms=${encodeURIComponent(formType)}&dateRange=custom&startdt=2026-01-01`;
+
+      return {
+        type: label,
+        company: src.entity_name || 'Unknown',
+        date: (src.file_date || '').slice(0, 10),
+        link
+      };
+    });
+  } catch (err) {
+    console.warn(`EDGAR feed error (${label}):`, err);
+    return [];
+  }
+}
+
+async function buildTicker() {
+  const track = document.getElementById('ticker-track');
+
+  const formPromises  = FORM_TYPES.map(f => fetchFormType(f.type, f.label, null));
+  const keywordPromises = MERGER_KEYWORDS.map(kw => fetchFormType('8-K', '8-K', kw));
+
+  const results = await Promise.all([...formPromises, ...keywordPromises]);
+  const filings = results.flat();
+
+  if (filings.length === 0) {
+    track.innerHTML = '<span class="block" style="color:var(--ticker-text);padding:0 16px;">No recent filings found.</span>';
+    return;
+  }
+
+  filings.sort((a, b) => b.date.localeCompare(a.date));
+
+  const seen = new Set();
+  const unique = filings.filter(f => {
+    const key = `${f.type}|${f.company}|${f.date}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  const items = unique.map(f =>
+    `<span class="block">` +
+    `<a href="${f.link}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">` +
+    `<span style="color:var(--ticker-accent);font-size:10px;letter-spacing:0.14em;margin-right:5px;">${f.type}</span>` +
+    `${f.company}` +
+    `<span style="color:#444;font-size:10px;margin-left:8px;">${f.date}</span>` +
+    `</a>` +
+    `</span><span class="sep">&#9670;</span>`
+  );
+
+  const tickerHTML = items.join('');
+  track.innerHTML =
+    `<span style="display:flex;align-items:center;">${tickerHTML}</span>` +
+    `<span style="display:flex;align-items:center;">${tickerHTML}</span>`;
+
+  const duration = Math.max(60, unique.length * 5);
+  track.style.animationDuration = `${duration}s`;
+}
+
+buildTicker();
+setInterval(buildTicker, 60 * 60 * 1000);
+</script>
+</body>
+</html>
