@@ -128,13 +128,19 @@ async function fetchFormType(formType, label, keyword) {
     const res = await fetch(url);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
+
+    // Debug: log raw response for first form type only
+    if (formType === 'S-4') {
+      console.log('EDGAR S-4 raw response:', JSON.stringify(json).slice(0, 500));
+    }
+
     const hits = json.hits?.hits || [];
+    console.log(`${label}: ${hits.length} hits`);
 
     return hits.map(h => {
       const src = h._source || {};
-      // Build direct EDGAR filing link from accession number
       const id = h._id || '';
-      const accession = id.split(':')[0]; // e.g. "0001234567-26-001234"
+      const accession = id.split(':')[0];
       const cikRaw = accession.split('-')[0];
       const cikInt = parseInt(cikRaw, 10);
       const accClean = accession.replace(/-/g, '');
