@@ -78,11 +78,7 @@
 <script>
 // Single EDGAR full-text search query combining all merger form types
 // Uses the EDGAR EFTS search UI endpoint which is publicly accessible
-const FORMS = 'S-4,F-4,DEFM14A,PREM14A,SC%20TO-T,SC%20TO-I,SC%2013D,15-12G';
-const URL = `https://efts.sec.gov/EFTS/solr/search/efts?forms=${FORMS}&dateRange=custom&startdt=2026-01-01`;
-
-// Separate single 8-K query with merger keyword
-const URL_8K = `https://efts.sec.gov/EFTS/solr/search/efts?forms=8-K&q=%22merger%22&dateRange=custom&startdt=2026-01-01`;
+const URL = '/.netlify/functions/edgar';
 
 async function safeFetch(url) {
   const res = await fetch(url);
@@ -115,9 +111,10 @@ async function buildTicker() {
   let filings = [];
 
   try {
-    const [json1, json2] = await Promise.all([safeFetch(URL), safeFetch(URL_8K)]);
-    console.log('Main response:', JSON.stringify(json1).slice(0, 300));
-    filings = [...parseHits(json1, 'Filing'), ...parseHits(json2, '8-K')];
+    const res = await fetch(URL);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    filings = parseHits(json, 'Filing');
   } catch(err) {
     console.error('Fetch error:', err);
     track.innerHTML = `<span style="padding:0 16px;color:#666;font-size:11px;">Feed unavailable — ${err.message}</span>`;
